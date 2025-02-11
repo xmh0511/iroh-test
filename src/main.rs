@@ -5,11 +5,10 @@
 //!     $ cargo run --example listen
 use std::time::Duration;
 
-use iroh::{endpoint::ConnectionError, Endpoint, RelayMode, SecretKey,};
-use tracing::{debug, info, warn};
-use tracing::instrument::WithSubscriber;
 use futures_lite::StreamExt;
-
+use iroh::{endpoint::ConnectionError, Endpoint, RelayMode, SecretKey};
+use tracing::instrument::WithSubscriber;
+use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
@@ -60,9 +59,7 @@ async fn main() -> anyhow::Result<()> {
     // println!(
     //     "\tcargo run --example connect -- --node-id {me} --addrs \"{local_addrs}\" --relay-url {relay_url}\n"
     // );
-    println!(
-        "\tcargo run --bin conn -- --node-id {me} --relay-url {relay_url}\n"
-    );
+    println!("\tcargo run --bin conn -- --node-id {me} --relay-url {relay_url}\n");
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
         let mut connecting = match incoming.accept() {
@@ -81,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
 
         tokio::spawn(async move {
             let mut stream = conn_type.stream();
-            while let Some(conn_type) = stream.next().await{
+            while let Some(conn_type) = stream.next().await {
                 println!("changed {conn_type:?}");
             }
         });
@@ -101,7 +98,16 @@ async fn main() -> anyhow::Result<()> {
             let message = format!("hi! you connected to {me}. bye bye");
             conn.send_datagram(message.into())?;
 
-            for i in 0..100{
+            let write_side = conn.clone();
+            tokio::spawn(async move {
+                for i in 0..100 {
+                    let message = format!("{me} is saying 'hello!' {i}");
+                    write_side.send_datagram(message.into()).unwrap();
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+            });
+
+            for _i in 0..100 {
                 let message = conn.read_datagram().await?;
                 let message = String::from_utf8(message.to_vec())?;
                 println!("received: {message}");

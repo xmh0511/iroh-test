@@ -9,8 +9,8 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use clap::Parser;
+use futures_lite::StreamExt;
 use iroh::{Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
-use tokio::io::AsyncWriteExt;
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -74,6 +74,15 @@ async fn main() -> anyhow::Result<()> {
     // Build a `NodeAddr` from the node_id, relay url, and UDP addresses.
     let addr = NodeAddr::from_parts(args.node_id, Some(args.relay_url), args.addrs);
 
+    let conn_endpoint = endpoint.clone();
+    let look_id = args.node_id;
+    tokio::spawn(async move {
+        let mut stream = conn_endpoint.conn_type(look_id).unwrap().stream();
+        while let Some(typ) = stream.next().await {
+            println!("conn type changed {typ:?}");
+        }
+    });
+
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
     let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
@@ -86,16 +95,24 @@ async fn main() -> anyhow::Result<()> {
     conn.send_datagram(message.into())?;
     println!("sent message ok");
 
-    let message =  conn.read_datagram().await?;
+    let message = conn.read_datagram().await?;
     let message = String::from_utf8(message.to_vec())?;
     println!("received: {message}");
 
-    for i in 0..100{
-        let message = format!("{me} is saying 'hello!' {i}");
-        conn.send_datagram(message.into())?;
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    }
+    let read_side = conn.clone();
+    tokio::spawn(async move {
+        for i in 0..100 {
+            let message = format!("{me} is saying 'hello!' {i}");
+            conn.send_datagram(message.into()).unwrap();
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+    });
 
+    for _i in 0..100 {
+        let msg = read_side.read_datagram().await?;
+        let msg = String::from_utf8(msg.to_vec())?;
+        println!("read {msg}");
+    }
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
